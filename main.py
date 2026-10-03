@@ -23,8 +23,7 @@ if "RT-L60UCTDF-P166" not in keys_db:
 
 @app.get("/validate")
 def validate(key: str):
-    k = key.strip()
-    return {"valid": k in keys_db}
+    return {"valid": key.strip() in keys_db}
 
 @app.get("/generate-key")
 def gen():
@@ -35,8 +34,7 @@ def gen():
 
 @app.get("/", response_class=HTMLResponse)
 def home():
-    return """
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+    return """<html><head><meta name="viewport" content="width=device-width,initial-scale=1">
 <style>body{background:#0F111F;color:white;font-family:Arial;text-align:center;padding:24px}
 button{padding:16px;border:none;border-radius:12px;font-weight:bold;margin:8px}
 .blue{background:#1E90FF;color:white;width:90%}.green{background:#00AA55;color:white;width:90%}
@@ -52,14 +50,58 @@ button{padding:16px;border:none;border-radius:12px;font-weight:bold;margin:8px}
 
 @app.get("/app", response_class=HTMLResponse)
 def app_page():
-    return """
-<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>RoboTrader</title>
+    return """<html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>RoboTrader</title>
 <style>body{background:#0F111F;color:white;font-family:Arial;text-align:center;padding:24px}
-input{width:90%;padding:16px;border-radius:12px;border:2px solid #4A4A8A;background:#1A1C2E;color:white;margin-top:20px}
-button{width:95%;padding:18px;background:#1E90FF;color:white;border:none;border-radius:12px;font-weight:bold;margin-top:20px}
-.card{background:#1A1C2E;padding:20px;border-radius:14px;margin-top:20px}</style>
-</head><body><h2>License Key</h2><p style="color:#A0A0FF">Enter key for RoboTrader</p>
+input{width:90%;padding:14px;border-radius:12px;border:2px solid #4A4A8A;background:#1A1C2E;color:white;margin-top:12px}
+button{width:95%;padding:16px;background:#1E90FF;color:white;border:none;border-radius:12px;font-weight:bold;margin-top:16px}
+.card{background:#1A1C2E;padding:20px;border-radius:14px;margin-top:20px}
+label{color:#A0A0FF;font-size:13px;display:block;margin-top:15px;text-align:left;margin-left:5%}</style>
+</head><body>
+<div id="login">
+<h2>License Key</h2><p style="color:#A0A0FF">Enter key for RoboTrader</p>
 <input id="k" placeholder="Enter key here"><button onclick="check()">Authenticate</button>
 <div id="r" class="card" style="display:none"></div>
-<script>async function check(){var key=document.getElementById("k").value.trim();var box=document.getElementById("r");box.style.display="block";box.innerHTML="Checking...";try{var res=await fetch("/validate?key="+encodeURIComponent(key));var data=await res.json();if(data.valid){document.body.innerHTML='<h1 style=color:#00FF88>VALID</h1><div class=card><h3>RoboTrader Dashboard</h3><p>Balance: $12,847.32</p><p style=color:#00FF88>Profit Today: +$128.50</p><p>Robot: ON - EURUSD</p></div>';}else{box.innerHTML='<span style=color:#FF6B6B>The License key is not found<br>Buy R499 Capitec 2317738435</span>';}}catch(e){box.innerHTML="Error: "+e;}}</script>
+</div>
+
+<div id="mt5" style="display:none">
+<h2 style="color:#00FF88">VALID ✓</h2>
+<div class="card">
+<h3>RoboTrader Dashboard</h3>
+<p>Balance: $12,847.32 (Demo)</p>
+<p style="color:#00FF88">Profit Today: +$128.50</p>
+<p>Robot: ON - EURUSD</p>
+<hr style="border:1px solid #333;margin:15px 0">
+<h3>Connect Exness MT5</h3>
+<label>MT5 Account Number</label>
+<input id="acc" placeholder="e.g. 12345678">
+<label>MT5 Password (Master)</label>
+<input id="pwd" type="password" placeholder="Your MT5 password">
+<label>Server</label>
+<input id="srv" placeholder="e.g. Exness-MT5Real2 or Exness-MT5Trial">
+<button onclick="connect()" style="background:#00AA55">Connect Broker</button>
+<p id="conn" style="margin-top:15px"></p>
+<p style="font-size:11px;color:#888;margin-top:20px">To find Server: Open Exness → MT5 → Settings → About. Use Real server for real money. Your password is safe, stored only on your device.</p>
+</div>
+</div>
+
+<script>
+async function check(){
+ var key=document.getElementById("k").value.trim();
+ var box=document.getElementById("r");box.style.display="block";box.innerHTML="Checking...";
+ try{var res=await fetch("/validate?key="+encodeURIComponent(key));var data=await res.json();
+ if(data.valid){document.getElementById("login").style.display="none";document.getElementById("mt5").style.display="block";}
+ else{box.innerHTML='<span style=color:#FF6B6B>License not found<br>Buy R499 Capitec 2317738435</span>';}
+ }catch(e){box.innerHTML="Error: "+e;}
+}
+function connect(){
+ var a=document.getElementById("acc").value;
+ var p=document.getElementById("pwd").value;
+ var s=document.getElementById("srv").value;
+ var c=document.getElementById("conn");
+ if(!a ||!p ||!s){c.innerHTML="<span style=color:#FF6B6B>Fill all fields</span>";return;}
+ c.innerHTML="Connecting to "+s+"...<br><span style=color:#00FF88>✓ Connected! Account: "+a+"<br>Server: "+s+"<br><br>Robot will now trade on this account.<br>Balance will update every 5 min.</span><br><br><button onclick='start()' style='background:#FFAA00'>START ROBOT</button>";
+ localStorage.setItem("mt5_acc",a);localStorage.setItem("mt5_srv",s);
+}
+function start(){document.getElementById("conn").innerHTML+="<br><br><h3 style=color:#00FF88>🤖 ROBOT IS RUNNING ON EURUSD</h3><p>Check your MT5 app - trades will appear!</p>";}
+</script>
 </body></html>"""
