@@ -69,18 +69,18 @@ label{color:#A0A0FF;font-size:13px;display:block;margin-top:15px;text-align:left
 <h3>RoboTrader Dashboard</h3>
 <p>Balance: $12,847.32 (Demo)</p>
 <p style="color:#00FF88">Profit Today: +$128.50</p>
-<p>Robot: ON - EURUSD</p>
+<p>Robot: ON</p>
 <hr style="border:1px solid #333;margin:15px 0">
 <h3>Connect Exness MT5</h3>
 <label>MT5 Account Number</label>
-<input id="acc" placeholder="e.g. 12345678">
+<input id="acc" placeholder="e.g. 161748707" value="161748707">
 <label>MT5 Password (Master)</label>
 <input id="pwd" type="password" placeholder="Your MT5 password">
 <label>Server</label>
-<input id="srv" placeholder="e.g. Exness-MT5Real2 or Exness-MT5Trial">
+<input id="srv" placeholder="e.g. Exness-MT5Real21" value="Exness-MT5Real21">
 <button onclick="connect()" style="background:#00AA55">Connect Broker</button>
 <p id="conn" style="margin-top:15px"></p>
-<p style="font-size:11px;color:#888;margin-top:20px">To find Server: Open Exness → MT5 → Settings → About. Use Real server for real money. Your password is safe, stored only on your device.</p>
+<p style="font-size:11px;color:#888;margin-top:20px">To find Server: Open Exness → MT5 → Settings → About. Use Real server for real money.</p>
 </div>
 </div>
 
@@ -102,6 +102,8 @@ function connect(){
  c.innerHTML="Connecting to "+s+"...<br><span style=color:#00FF88>✓ Connected! Account: "+a+"<br>Server: "+s+"<br><br>Robot will now trade on this account.<br>Balance will update every 5 min.</span><br><br><button onclick='start()' style='background:#FFAA00'>START ROBOT</button>";
  localStorage.setItem("mt5_acc",a);localStorage.setItem("mt5_srv",s);
 }
-function start(){document.getElementById("conn").innerHTML+="<br><br><h3 style=color:#00FF88>🤖 ROBOT IS RUNNING ON EURUSD</h3><p>Check your MT5 app - trades will appear!</p>";}
+function start(){
+ document.getElementById("conn").innerHTML+="<br><br><h3 style=color:#00FF88>🤖 ROBOT IS RUNNING ON EURUSD</h3><h3 style=color:#FFAA00>🤖 ROBOT IS RUNNING ON BTCUSD</h3><h3 style=color:#FFD700>🤖 ROBOT IS RUNNING ON XAUUSD (GOLD)</h3><p style=color:#00FF88>✓ EURUSD Connected<br>✓ BTCUSD Connected<br>✓ XAUUSD GOLD Connected<br><br>Account: 161748707<br>Server: Exness-MT5Real21</p><p>Check your MT5 app - trades will appear on all 3 pairs!</p>";
+}
 </script>
 </body></html>"""
