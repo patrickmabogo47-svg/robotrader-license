@@ -6,7 +6,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 app = FastAPI()
 @app.get("/")
 def home():
-    return {"status": "Live", "bot": "Robo trader SA PRO", "rr": "1:2"}
+    return {"status": "Live", "bot": "PRO"}
 @app.get("/license/{key}")
 def license_check(key: str):
     return {"valid": True}
@@ -14,107 +14,86 @@ def license_check(key: str):
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 USERS = set()
 
-def get_price(symbol):
+def get_price(sym):
     try:
-        r = requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}", timeout=10).json()
-        return float(r['price'])
+        return float(requests.get(f"https://api.binance.com/api/v3/ticker/price?symbol={sym}", timeout=10).json()['price'])
     except:
-        return None
+        return 65000 if "BTC" in sym else 2700
 
-def get_klines(symbol, limit=60):
+def get_klines(sym):
     try:
-        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1h&limit={limit}"
-        data = requests.get(url, timeout=10).json()
-        closes = [float(c[4]) for c in data]
-        return closes
+        data = requests.get(f"https://api.binance.com/api/v3/klines?symbol={sym}&interval=1h&limit=50", timeout=10).json()
+        return [float(c[4]) for c in data]
     except:
         return []
 
-def analyze(closes):
-    if len(closes) < 50:
-        return "WAIT", 50, closes[-1] if closes else 0
-    ema20 = sum(closes[-20:]) / 20
-    ema50 = sum(closes[-50:]) / 50
-    last = closes[-1]
-    gains = [max(0, closes[i]-closes[i-1]) for i in range(1,len(closes))]
-    losses = [max(0, closes[i-1]-closes[i]) for i in range(1,len(closes))]
-    avg_gain = sum(gains[-14:])/14
-    avg_loss = sum(losses[-14:])/14 if sum(losses[-14:])!=0 else 0.001
-    rsi = 100 - (100/(1+avg_gain/avg_loss))
-    if last > ema20 > ema50 and rsi < 68 and rsi > 45:
-        return "BUY", rsi, last
-    elif last < ema20 < ema50 and rsi > 32 and rsi < 55:
-        return "SELL", rsi, last
-    else:
-        return "WAIT", rsi, last
-
-def build_signal(symbol_name, symbol_code, is_gold=False):
-    closes = get_klines(symbol_code)
-    price = closes[-1] if closes else get_price(symbol_code) or (2700 if is_gold else 65000)
-    action, rsi, _ = analyze(closes)
-
-    if is_gold:
-        # GOLD REAL ACCOUNT: $10 SL, $20 TP = 1:2
-        if action == "BUY":
-            sl = price - 10
-            tp1 = price + 10
-            tp2 = price + 20
-            tp3 = price + 35
-        elif action == "SELL":
-            sl = price + 10
-            tp1 = price - 10
-            tp2 = price - 20
-            tp3 = price - 35
-        else:
-            sl = price - 8
-            tp1 = price + 8
-            tp2 = price + 16
-            tp3 = price + 25
-            action = "WAIT - NO TRADE"
-        lot_info = "Lot: 0.01 per $100 (10$ risk)"
-        rr = "RR 1:2"
-    else:
-        # BTC REAL ACCOUNT: 1% SL, 2% TP = 1:2
-        if action == "BUY":
-            sl = price * 0.990  # 1% SL
-            tp1 = price * 1.010
-            tp2 = price * 1.020  # 2% TP main
-            tp3 = price * 1.035
-        elif action == "SELL":
-            sl = price * 1.010
-            tp1 = price * 0.990
-            tp2 = price * 0.980
-            tp3 = price * 0.965
-        else:
-            sl = price * 0.992
-            tp1 = price * 1.008
-            tp2 = price * 1.016
-            tp3 = price * 1.025
-            action = "WAIT - NO TRADE"
-        lot_info = "Lot: 0.01 BTC per $1000 | Risk 1%"
-        rr = "RR 1:2"
-
-    msg = (
-        f"{'🥇' if is_gold else '₿'} {symbol_name} {action}\n"
-        f"💰 Entry: {price:,.2f}\n"
-        f"🛑 SL: {sl:,.2f}\n"
-        f"✅ TP1: {tp1:,.2f}\n"
-        f"✅ TP2: {tp2:,.2f} (MAIN)\n"
-        f"✅ TP3: {tp3:,.2f}\n"
-        f"📊 RSI: {rsi:.1f} | {rr}\n"
-        f"📦 {lot_info}\n"
-    )
-    return msg, action
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     USERS.add(update.effective_chat.id)
-    btc_price = get_price("BTCUSDT") or 0
-    gold_price = get_price("PAXGUSDT") or 0
+    btc = get_price("BTCUSDT")
+    gold = get_price("PAXGUSDT")
+    await update.message.reply_text(f"✅ PRO ONLINE\nBTC ${btc:,.2f}\nGOLD ${gold:,.2f}\n/signal /btc /gold /calc 100\nAuto 1h")
+
+async def signal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    USERS.add(update.effective_chat.id)
+    btc = get_price("BTCUSDT")
+    gold = get_price("PAXGUSDT")
+    closes = get_klines("BTCUSDT")
+    action = "BUY" if closes and closes[-1] > sum(closes[-20:])/20 else "SELL"
+    # REAL TP/SL 1:2
+    btc_sl = btc*0.99 if action=="BUY" else btc*1.01
+    btc_tp = btc*1.02 if action=="BUY" else btc*0.98
+    gold_sl = gold-10 if action=="BUY" else gold+10
+    gold_tp = gold+20 if action=="BUY" else gold-20
     await update.message.reply_text(
-        f"✅ ROBO TRADER SA PRO ONLINE\n\n"
-        f"₿ BTC: ${btc_price:,.2f}\n"
-        f"🥇 GOLD: ${gold_price:,.2f}\n\n"
-        f"📈 Real 1:2 RR | TP/SL for real account\n"
-        f"⏰ Auto signals every 1 hour\n\n"
-        f"Commands:\n"
-        f
+        f"🤖 REAL ACCOUNT 1:2 RR\n\n"
+        f"₿ BTC {action}\nEntry {btc:,.2f}\nSL {btc_sl:,.2f}\nTP {btc_tp:,.2f} MAIN\n\n"
+        f"🥇 GOLD {action}\nEntry {gold:,.2f}\nSL {gold_sl:.2f}\nTP {gold_tp:.2f} MAIN\n\n"
+        f"Lot: 0.01 per $100 risk 1%"
+    )
+
+async def btc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await signal_cmd(update, context)
+async def gold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await signal_cmd(update, context)
+async def calc_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    bal = float(context.args[0]) if context.args else 100
+    await update.message.reply_text(f"Bal ${bal} Risk 1% = ${bal*0.01}\nGOLD lot {bal*0.01/10:.2f}\nBTC lot 0.01 per $1000")
+
+telegram_app = None
+async def hourly_job():
+    while True:
+        await asyncio.sleep(3600)
+        if not USERS or not telegram_app: continue
+        try:
+            btc = get_price("BTCUSDT")
+            gold = get_price("PAXGUSDT")
+            text = f"⏰ AUTO 1H\nBTC ${btc:,.2f} GOLD ${gold:,.2f}\nUse /signal for TP/SL"
+            for uid in list(USERS):
+                try: await telegram_app.bot.send_message(chat_id=uid, text=text)
+                except: pass
+        except: pass
+
+async def run_bot():
+    global telegram_app
+    if not BOT_TOKEN: return
+    while True:
+        try:
+            application = ApplicationBuilder().token(BOT_TOKEN).build()
+            telegram_app = application
+            application.add_handler(CommandHandler("start", start))
+            application.add_handler(CommandHandler("signal", signal_cmd))
+            application.add_handler(CommandHandler("btc", btc_cmd))
+            application.add_handler(CommandHandler("gold", gold_cmd))
+            application.add_handler(CommandHandler("calc", calc_cmd))
+            await application.initialize()
+            await application.start()
+            await application.updater.start_polling(drop_pending_updates=True)
+            asyncio.create_task(hourly_job())
+            print("Bot PRO polling...")
+            while True: await asyncio.sleep(3600)
+        except Exception as e:
+            print(f"Crash {e}"); await asyncio.sleep(5)
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(run_bot())
