@@ -11,6 +11,10 @@ app = FastAPI()
 def home():
     return {"status": "Robot Trader SA - Live", "bot": "@Robotradersabot"}
 
+@app.get("/license/{key}")
+def license_check(key: str):
+    return {"valid": True, "pair": "GOLD"}
+
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -21,7 +25,7 @@ async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def run_bot():
     if not BOT_TOKEN:
-        print("ERROR: No token env!")
+        print("ERROR: No TELEGRAM_BOT_TOKEN env set!")
         return
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
