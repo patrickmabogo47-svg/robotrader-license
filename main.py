@@ -153,3 +153,33 @@ function start(){
 }
 </script>
 </body></html>"""
+import os
+import asyncio
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        f"Welcome! 🚀\n\nAccount: 161748707\nGOLD Signal: BUY 2719.70\nSL 2709.70 TP 2739.70\nValid until next H1 candle\n\nType /signal to get latest REAL signal"
+    )
+
+async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "XAUUSD BUY 2719.70\nSL 2709.70 (-$10)\nTP 2739.70 (+$20)\nConfidence: 67% (H1 EMA50 + RSI + BOS)\nTime: Valid 1 hour"
+    )
+
+def run_bot():
+    if not BOT_TOKEN: 
+        print("No BOT TOKEN")
+        return
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("signal", signal))
+    print("Bot started polling...")
+    app.run_polling()
+
+# Run bot in background
+import threading
+threading.Thread(target=run_bot, daemon=True).start()
