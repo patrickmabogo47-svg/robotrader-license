@@ -1,5 +1,4 @@
-aiohttp
-pandas
-Flask
-python-telegram-bot
-numpy
+pyTelegramBotAPI==4.14.0
+flask==3.0.0
+yfinance==0.2.31
+requests
