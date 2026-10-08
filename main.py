@@ -10,76 +10,105 @@ TOKEN = "8833864287:AAE3sJH5rvSXfhLrmMhj_1o1wT4776X_EMI"
 bot = telebot.TeleBot(TOKEN)
 app = Flask(__name__)
 
-SYMBOLS = {
-    "EURUSD": "EURUSD=X",
-    "GOLD": "GC=F",
-    "BTC": "BTC-USD"
-}
+SYMBOLS = {"EURUSD":"EURUSD=X", "GOLD":"GC=F", "BTC":"BTC-USD"}
+
+def rsi(series, period=14):
+    delta = series.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(period).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(period).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
 def get_analysis(ticker):
     try:
-        df = yf.download(ticker, period="2d", interval="15m", progress=False)
-        if len(df) < 20: return None, None
-        close = df['Close']
-        sma20 = close.rolling(20).mean().iloc[-1]
-        last = close.iloc[-1]
-        prev = close.iloc[-2]
-        trend = "BUY ⬆️" if last > sma20 else "SELL ⬇️"
-        change = ((last-prev)/prev)*100
+        # Fix: handle new yfinance format
+        df = yf.download(ticker, period="5d", interval="1h", progress=False, auto_adjust=True)
+        if df.empty or len(df) < 20:
+            print(f"{ticker} empty")
+            return None, None
+        # Fix for MultiIndex columns in new yfinance
+        if isinstance(df.columns, pd.MultiIndex):
+            close = df['Close'].iloc[:,0] if 'Close' in df.columns.get_level_values(0) else df.iloc[:,3]
+        else:
+            close = df['Close']
 
-        # Chart
+        close = close.dropna()
+        if len(close) < 20:
+            return None, None
+
+        last = float(close.iloc[-1])
+        ema9 = float(close.ewm(span=9).mean().iloc[-1])
+        ema21 = float(close.ewm(span=21).mean().iloc[-1])
+        rsi_val = float(rsi(close).iloc[-1])
+
+        if ema9 > ema21 and rsi_val > 52:
+            signal = "🟢 BUY ⬆️"
+            sl = last * 0.997
+            tp = last * 1.005
+        elif ema9 < ema21 and rsi_val < 48:
+            signal = "🔴 SELL ⬇️"
+            sl = last * 1.003
+            tp = last * 0.995
+        elif ema9 > ema21:
+            signal = "🟡 WEAK BUY ⬆️"
+            sl = last * 0.998
+            tp = last * 1.002
+        else:
+            signal = "🟡 WEAK SELL ⬇️"
+            sl = last * 1.002
+            tp = last * 0.998
+
         plt.figure(figsize=(6,3))
-        plt.plot(close.tail(50))
-        plt.title(f"{ticker} 15m")
+        plt.plot(close.tail(60))
+        plt.plot(close.ewm(span=9).mean().tail(60), label='EMA9')
+        plt.plot(close.ewm(span=21).mean().tail(60), label='EMA21')
+        plt.title(f"{ticker} RSI:{rsi_val:.1f}")
+        plt.legend(fontsize=8)
         plt.grid(True)
         plt.tight_layout()
         buf = io.BytesIO()
-        plt.savefig(buf, format='png')
+        plt.savefig(buf, format='png', dpi=100)
         plt.close()
         buf.seek(0)
-        return (last, sma20, trend, change), buf
+        return (last, signal, rsi_val, ema9, ema21, sl, tp), buf
     except Exception as e:
-        print(f"Error {ticker}: {e}")
+        print(f"ERROR {ticker}: {e}")
+        import traceback; traceback.print_exc()
         return None, None
 
 @app.route('/')
-def home(): return "Bot V4.9 PRO - EUR GOLD BTC"
+def home(): return "V5.1 Fixed"
 
 @bot.message_handler(commands=['start'])
 def start(m):
-    bot.reply_to(m, "🤖 RoboTrader SA V4.9 PRO LIVE!\n\n✅ EURUSD\n✅ GOLD (XAU)\n✅ BTC-USD\n\nUse:\n/signal ALL - All 3 with charts\n/signal EURUSD\n/signal GOLD\n/signal BTC")
-
-@bot.message_handler(commands=['status'])
-def status(m):
-    bot.reply_to(m, "🟢 V4.9 PRO Online\n📡 Charts: Enabled\n📊 Assets: EURUSD, GOLD, BTC")
+    bot.reply_to(m, "🤖 V5.1 FIXED LIVE!\n\nTry:\n/signal EURUSD\n/signal GOLD\n/signal BTC\n/signal ALL")
 
 @bot.message_handler(commands=['signal'])
-def signal(m):
+def signal_cmd(m):
     args = m.text.split()
     target = args[1].upper() if len(args)>1 else "ALL"
-
-    to_scan = SYMBOLS.keys() if target=="ALL" else [target] if target in SYMBOLS else SYMBOLS.keys()
-
+    to_scan = list(SYMBOLS.keys()) if target=="ALL" else [target] if target in SYMBOLS else list(SYMBOLS.keys())
     bot.send_message(m.chat.id, f"📊 Analyzing {', '.join(to_scan)}... ⏳")
 
     for name in to_scan:
         data, chart = get_analysis(SYMBOLS[name])
         if not data:
-            bot.send_message(m.chat.id, f"❌ {name}: Data error, try again")
-            continue
-        last, sma20, trend, change = data
-        msg = f"📈 {name} SIGNAL\nPrice: {last:.2f}\nTrend (SMA20): {trend}\nChange: {change:+.2f}%\n\nSL: {last*0.998:.2f} | TP: {last*1.002:.2f}\n⏰ 15m - V4.9"
-        if chart:
-            bot.send_photo(m.chat.id, chart, caption=msg)
-        else:
-            bot.send_message(m.chat.id, msg)
+            bot.send_message(m.chat.id, f"⚠️ {name}: Yahoo blocking, retry in 30s - trying again...")
+            time.sleep(2)
+            data, chart = get_analysis(SYMBOLS[name])
+            if not data:
+                bot.send_message(m.chat.id, f"❌ {name}: Data error, Yahoo busy. Try /signal {name} again in 1 min")
+                continue
+        last, sig, rsi_v, e9, e21, sl, tp = data
+        msg = f"{sig}\n\n📈 {name}\n💰 {last:.2f}\nRSI: {rsi_v:.1f} | EMA9:{e9:.2f} EMA21:{e21:.2f}\n\n🎯 TP: {tp:.2f}\n🛑 SL: {sl:.2f}\n⏰ 1h TF - V5.1"
+        bot.send_photo(m.chat.id, chart, caption=msg)
         time.sleep(1)
 
 def run_flask(): app.run(host='0.0.0.0', port=10000)
 
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
-    print("Flask + V4.9 Bot polling...")
     while True:
-        try: bot.infinity_polling(timeout=60, long_polling_timeout=60)
-        except: time.sleep(5)
+        try: bot.infinity_polling(timeout=60)
+        except Exception as e:
+            print(f"Poll error {e}"); time.sleep(5)
