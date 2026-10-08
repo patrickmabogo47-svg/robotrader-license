@@ -19,7 +19,6 @@ USERS_FILE = "/tmp/users.json"
 try:
     with open(USERS_FILE, 'r') as f: USERS = set(json.load(f))
 except: USERS = set()
-
 def save_users():
     with open(USERS_FILE, 'w') as f: json.dump(list(USERS), f)
 
@@ -33,19 +32,19 @@ def admin():
 
 def calc_rsi(prices, period=14):
     delta = prices.diff()
-    gain = delta.where(delta > 0, 0).rolling(window=period).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-    rs = gain / loss
+    up = delta.clip(lower=0)
+    down = -1 * delta.clip(upper=0)
+    ma_up = up.rolling(window=period).mean()
+    ma_down = down.rolling(window=period).mean()
+    rs = ma_up / ma_down
     return 100 - (100 / (1 + rs))
 
-def calc_ema(prices, period):
-    return prices.ewm(span=period, adjust=False).mean()
+def calc_ema(prices, period): return prices.ewm(span=period, adjust=False).mean()
 
 def calc_confidence(df, break_type):
     close=df['close'].iloc[-1]; rsi=df['RSI'].iloc[-1]
     ema50=df['EMA50'].iloc[-1]; ema200=df['EMA200'].iloc[-1]
-    recent=df.tail(30)
-    range_pct=(recent['high'].max()-recent['low'].min())/close*100
+    recent=df.tail(30); range_pct=(recent['high'].max()-recent['low'].min())/close*100
     score=50
     if close>ema50>ema200 or close<ema50<ema200: score+=15
     elif close>ema50: score+=5
@@ -66,29 +65,20 @@ async def fetch_okx(symbol="BTC-USDT", interval="15m", limit=100):
                 if data.get("code")!="0": return None
                 candles=data["data"][::-1]
                 df=pd.DataFrame(candles, columns=["ts","o","h","l","c","vol","volCcy","volCcyQuote","confirm"])
-                df["close"]=df["c"].astype(float)
-                df["high"]=df["h"].astype(float)
-                df["low"]=df["l"].astype(float)
-                df["open"]=df["o"].astype(float)
-                df["RSI"]=calc_rsi(df["close"])
-                df["EMA50"]=calc_ema(df["close"],50)
-                df["EMA200"]=calc_ema(df["close"],200)
+                df["close"]=df["c"].astype(float); df["high"]=df["h"].astype(float)
+                df["low"]=df["l"].astype(float); df["open"]=df["o"].astype(float)
+                df["RSI"]=calc_rsi(df["close"]); df["EMA50"]=calc_ema(df["close"],50); df["EMA200"]=calc_ema(df["close"],200)
                 return df
-    except Exception as e:
-        print(f"fetch error {e}")
-        return None
+    except: return None
 
 def detect_signal(df):
-    if df is None or len(df)<60:
-        return {"type":"ERROR","conf":0,"range_low":0,"range_high":0,"price":0,"rsi":0,"is_skip":True}
+    if df is None or len(df)<60: return {"type":"ERROR","conf":0,"range_low":0,"range_high":0,"price":0,"rsi":0,"is_skip":True}
     close=df["close"].iloc[-1]; rsi=df["RSI"].iloc[-1]
     recent=df.tail(30); range_low=recent["low"].min(); range_high=recent["high"].max()
     if close>range_high*1.001:
-        conf=calc_confidence(df,"BOS")
-        return {"type":"BUY BOS","conf":conf,"range_low":range_low,"range_high":range_high,"price":close,"rsi":rsi}
+        conf=calc_confidence(df,"BOS"); return {"type":"BUY BOS","conf":conf,"range_low":range_low,"range_high":range_high,"price":close,"rsi":rsi}
     if close<range_low*0.999:
-        conf=calc_confidence(df,"BOS")
-        return {"type":"SELL BOS","conf":conf,"range_low":range_low,"range_high":range_high,"price":close,"rsi":rsi}
+        conf=calc_confidence(df,"BOS"); return {"type":"SELL BOS","conf":conf,"range_low":range_low,"range_high":range_high,"price":close,"rsi":rsi}
     dist_high=(range_high-close)/close*100; dist_low=(close-range_low)/close*100
     if dist_high<0.4 and df["RSI"].iloc[-1]>df["RSI"].iloc[-5]:
         conf=calc_confidence(df,"TL BREAK")
@@ -158,7 +148,6 @@ async def auto_loop():
         await asyncio.sleep(900)
 
 def run_flask(): flask_app.run(host='0.0.0.0', port=PORT)
-
 async def main():
     global telegram_app; threading.Thread(target=run_flask, daemon=True).start()
     telegram_app=Application.builder().token(TOKEN).build()
@@ -168,5 +157,4 @@ async def main():
     await telegram_app.start(); await telegram_app.updater.start_polling()
     print(f"{VERSION} started")
     while True: await asyncio.sleep(3600)
-
 if __name__=="__main__": asyncio.run(main())
