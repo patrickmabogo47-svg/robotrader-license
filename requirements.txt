@@ -1,6 +1,6 @@
-aiohttp==3.9.5
-pandas==2.2.2
-numpy==1.26.4
-Flask==3.0.3
-python-telegram-bot==20.7
-matplotlib==3.8.4
+aiohttp
+pandas
+Flask
+python-telegram-bot
+matplotlib
+numpy
