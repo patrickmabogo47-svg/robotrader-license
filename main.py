@@ -1,132 +1,99 @@
-import os, requests, yfinance as yf, pandas as pd, mplfinance as mpf
+import os, time, threading, requests, mplfinance as mpf
+import yfinance as yf
+import pandas as pd
 from flask import Flask
-import threading, time, os.path
+from datetime import datetime
 
 app = Flask(__name__)
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN","").strip()
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID","").strip()
-ASSETS = {"GOLD":"GC=F", "EURUSD":"EURUSD=X", "BTC":"BTC-USD"}
+TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_tg(text, chart_path=None):
-    if not TELEGRAM_TOKEN or not CHAT_ID: return False
     try:
-        # text
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        r = requests.post(url, data={"chat_id":CHAT_ID, "text":text}, timeout=20)
-        print(f"TG text {r.status_code}")
-        # chart
-        if chart_path and os.path.exists(chart_path):
+        if chart_path:
             with open(chart_path,'rb') as f:
-                urlp = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-                rp = requests.post(urlp, data={"chat_id":CHAT_ID}, files={"photo":f}, timeout=25)
-                print(f"TG photo {rp.status_code}")
-        return r.ok
-    except Exception as e:
-        print(f"TG err {e}"); return False
+                requests.post(f"https://api.telegram.org/bot{TOKEN}/sendPhoto",
+                    data={"chat_id":CHAT,"caption":text}, files={"photo":f}, timeout=15)
+        else:
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                data={"chat_id":CHAT,"text":text}, timeout=10)
+        return True
+    except: return False
 
-def get_sniper(symbol, name):
-    try:
-        df = yf.download(symbol, period="7d", interval="1h", progress=False, auto_adjust=False)
-        if len(df)<120: return None
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
-        df['EMA50']=df['Close'].ewm(span=50).mean()
-        df['EMA200']=df['Close'].ewm(span=200).mean()
-        delta=df['Close'].diff()
-        gain=delta.where(delta>0,0).rolling(14).mean()
-        loss=-delta.where(delta<0,0).rolling(14).mean()
-        rs=gain/(loss+1e-9)
-        df['RSI']=100-(100/(1+rs))
-        ema12=df['Close'].ewm(span=12).mean()
-        ema26=df['Close'].ewm(span=26).mean()
-        df['MACD']=ema12-ema26
-        df['SIG']=df['MACD'].ewm(span=9).mean()
-        last=df.iloc[-1]
-        price=float(last['Close']); rsi=float(last['RSI'])
-        ema50=float(last['EMA50']); ema200=float(last['EMA200'])
-        macd=float(last['MACD']); sig=float(last['SIG'])
-        score=0; trend="NONE"
-        if price>ema50>ema200 and macd>sig:
-            score+=2; trend="4H UP"
-        elif price<ema50<ema200 and macd<sig:
-            score+=2; trend="4H DOWN"
-        if 30<rsi<70: score+=1
-        if abs(macd-sig)>0: score+=0.5
-        # keep df for chart
-        df_tail = df.tail(100)
-        if score>=3 and trend!="NONE":
-            direction="BUY" if "UP" in trend else "SELL"
-            tp=price*1.022 if direction=="BUY" else price*0.978
-            sl=price*0.99 if direction=="BUY" else price*1.01
-            return {"name":name,"symbol":symbol,"price":price,"rsi":rsi,"trend":trend,"dir":direction,"score":round(score,1),"tp":tp,"sl":sl,"df":df_tail}
-        return {"name":name,"symbol":symbol,"price":price,"rsi":rsi,"trend":"NONE","score":round(score,1),"df":df_tail}
-    except Exception as e:
-        print(f"{name} err {e}"); return None
+def fetch_yf(symbol_list):
+    for sym in symbol_list:
+        try:
+            df = yf.download(sym, period="5d", interval="1h", progress=False)
+            if len(df) > 50:
+                return df, sym
+        except: continue
+    return None, None
 
-def make_chart(data):
-    try:
-        df=data['df']
-        path=f"/tmp/{data['name']}_sniper.png"
-        mpf.plot(df, type='candle', mav=(50,200), volume=False, style='yahoo', title=f"{data['name']} {data['dir']} Score {data['score']} - {data['trend']}", savefig=path)
-        return path
-    except Exception as e:
-        print(f"chart err {e}"); return None
+def analyze(symbol_name, symbols):
+    df, used = fetch_yf(symbols)
+    if df is None: return f"{symbol_name}: data fail ({used})"
+    close = df['Close']
+    delta = close.diff()
+    gain = delta.where(delta>0,0).rolling(14).mean()
+    loss = -delta.where(delta<0,0).rolling(14).mean()
+    rs = gain/loss
+    rsi = 100-(100/(1+rs))
+    r = float(rsi.iloc[-1])
+    price = float(close.iloc[-1])
+    ema = float(close.ewm(span=20).mean().iloc[-1])
+
+    score=0
+    if r < 35: score+=1
+    if r > 65: score-=1
+    if price > ema: score+=1
+    else: score-=1
+    if abs(price-ema)/price < 0.01: score+=1
+
+    if score >=3:
+        sig = f"🎯 SNIPER BUY {symbol_name} ${price:.2f} RSI {r:.1f} Score {score}"
+        # chart
+        try:
+            df.tail(100).plot(type='candle', style='yahoo')
+            mpf.plot(df.tail(100), type='candle', savefig='chart.png')
+            send_tg(sig,'chart.png')
+        except:
+            send_tg(sig)
+        return f"{symbol_name}: ${price:.2f} RSI {r:.1f} Score {score} - {sig}"
+    elif score <=-3:
+        sig = f"🎯 SNIPER SELL {symbol_name} ${price:.2f} RSI {r:.1f} Score {score}"
+        send_tg(sig)
+        return f"{symbol_name}: ${price:.2f} RSI {r:.1f} Score {score} - {sig}"
+    elif score >=2:
+        return f"{symbol_name}: ${price:.2f} RSI {r:.1f} Score {score} - ⚠️ WEAK BUY - No Telegram"
+    elif score <=-2:
+        return f"{symbol_name}: ${price:.2f} RSI {r:.1f} Score {score} - ⚠️ WEAK SELL - No Telegram"
+    else:
+        return f"{symbol_name}: ${price:.2f} RSI {r:.1f} Score {score} - No trade"
+
+def full_scan():
+    gold = analyze("GOLD", ["GC=F","XAUUSD=X","PAXG-USD","GLD"])
+    eurusd = analyze("EURUSD", ["EURUSD=X"])
+    btc = analyze("BTC", ["BTC-USD"])
+    return f"{gold}\n{eurusd}\n{btc}\n\n{datetime.utcnow()} UTC"
 
 @app.route("/")
-def home(): return "RoboTrader SA V6.0 SMART LIVE - Auto + Chart"
-
-@app.route("/test-telegram")
-def test_tg():
-    ok=send_tg("🔔 PURE TELEGRAM TEST - V6.0 SMART is OK, auto running")
-    return f"Telegram test sent: {ok}"
+def home(): return "V6.1 SMART LIVE - "+full_scan().replace("\n","<br>")
 
 @app.route("/signal")
-def signal_now():
-    out=[]
-    for n,t in ASSETS.items():
-        r=get_sniper(t,n)
-        if not r: continue
-        if r['trend']!="NONE" and r['score']>=3:
-            chart=make_chart(r)
-            txt=f"🎯 SNIPER {r['dir']} ⬆️ Score {r['score']}\n{n} ({r['symbol']})\nPrice: ${r['price']:.2f}\n✅ {r['trend']}\nRSI:{r['rsi']:.1f}\n🎯 TP:{r['tp']:.2f}\n🛑 SL:{r['sl']:.2f}"
-            send_tg(txt, chart); out.append(txt)
-        else:
-            out.append(f"{n}: ${r['price']:.2f} RSI {r['rsi']:.1f} Score {r['score']} - No trade")
-    return "<br>".join(out)
+def signal(): return full_scan().replace("\n","<br>")
 
-def loop_30min():
-    print("30min loop started")
+@app.route("/test-telegram")
+def testtg():
+    ok = send_tg("🔔 PURE TELEGRAM TEST - V6.1 SMART BUY/SELL is OK, auto running")
+    return f"Telegram test sent: {ok}"
+
+def loop():
     while True:
-        try:
-            for n,t in ASSETS.items():
-                r=get_sniper(t,n)
-                if r and r['trend']!="NONE" and r['score']>=3:
-                    chart=make_chart(r)
-                    txt=f"🎯 SNIPER {r['dir']} ⬆️ Score {r['score']}\n{n} | ${r['price']:.2f}\n✅ {r['trend']}\nRSI:{r['rsi']:.1f}\n🎯 TP:{r['tp']:.2f}\n🛑 SL:{r['sl']:.2f}"
-                    send_tg(txt, chart)
-            time.sleep(1800) # 30min
-        except Exception as e:
-            print(f"loop30 err {e}"); time.sleep(60)
+        try: full_scan()
+        except: pass
+        time.sleep(1800) # 30min
 
-def loop_hourly():
-    print("hourly loop started")
-    while True:
-        try:
-            time.sleep(3600)
-            lines=[]
-            for n,t in ASSETS.items():
-                r=get_sniper(t,n)
-                if r: lines.append(f"{n}: ${r['price']:.2f} | RSI {r['rsi']:.1f}")
-            if lines:
-                txt="⏰ HOURLY MARKET SUMMARY (1h)\n\n"+"\n".join(lines)+"\n\n🎯 Sniper scans every 30min auto"
-                send_tg(txt)
-        except Exception as e:
-            print(f"loop hourly err {e}"); time.sleep(60)
+threading.Thread(target=loop, daemon=True).start()
 
-# Start auto threads once
-if not hasattr(app, 'threads_started'):
-    threading.Thread(target=loop_30min, daemon=True).start()
-    threading.Thread(target=loop_hourly, daemon=True).start()
-    app.threads_started=True
-
-if __name__=="__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT",10000)))
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",10000)))
