@@ -1,103 +1,90 @@
-import os, time, requests, yfinance as yf
+import os, requests, yfinance as yf, pandas as pd, mplfinance as mpf
 from flask import Flask
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
+import threading, time, os.path
 
 app = Flask(__name__)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN","").strip()
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID","").strip()
+ASSETS = {"GOLD":"GC=F", "EURUSD":"EURUSD=X", "BTC":"BTC-USD"}
 
-TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
-
-def send_telegram(text):
-    if not TOKEN or not CHAT_ID:
-        print("NO TOKEN/CHAT", flush=True)
-        return False
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+def send_tg(text, chart_path=None):
+    if not TELEGRAM_TOKEN or not CHAT_ID: return False
     try:
-        r = requests.post(url, json={"chat_id": CHAT_ID, "text": text, "parse_mode": "Markdown"}, timeout=15)
-        print(f"Telegram status {r.status_code} {r.text[:200]}", flush=True)
-        return r.status_code == 200
+        # text
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        r = requests.post(url, data={"chat_id":CHAT_ID, "text":text}, timeout=20)
+        print(f"TG text {r.status_code}")
+        # chart
+        if chart_path and os.path.exists(chart_path):
+            with open(chart_path,'rb') as f:
+                urlp = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+                rp = requests.post(urlp, data={"chat_id":CHAT_ID}, files={"photo":f}, timeout=25)
+                print(f"TG photo {rp.status_code}")
+        return r.ok
     except Exception as e:
-        print(f"Telegram FAIL {e}", flush=True)
-        return False
+        print(f"TG err {e}"); return False
 
-def get_data(ticker, period="2d", interval="30m"):
+def get_sniper(symbol, name):
     try:
-        # Anti-429: fake Chrome browser
-        from curl_cffi import requests as c_req
-        session = c_req.Session(impersonate="chrome110")
-        tk = yf.Ticker(ticker, session=session)
-        df = tk.history(period=period, interval=interval, auto_adjust=True)
-        if df.empty:
-            print(f"EMPTY {ticker}", flush=True)
-            return None
-        print(f"DATA OK {ticker} rows={len(df)}", flush=True)
-        return df
+        df = yf.download(symbol, period="7d", interval="1h", progress=False, auto_adjust=False)
+        if len(df)<120: return None
+        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        df['EMA50']=df['Close'].ewm(span=50).mean()
+        df['EMA200']=df['Close'].ewm(span=200).mean()
+        delta=df['Close'].diff()
+        gain=delta.where(delta>0,0).rolling(14).mean()
+        loss=-delta.where(delta<0,0).rolling(14).mean()
+        rs=gain/(loss+1e-9)
+        df['RSI']=100-(100/(1+rs))
+        ema12=df['Close'].ewm(span=12).mean()
+        ema26=df['Close'].ewm(span=26).mean()
+        df['MACD']=ema12-ema26
+        df['SIG']=df['MACD'].ewm(span=9).mean()
+        last=df.iloc[-1]
+        price=float(last['Close']); rsi=float(last['RSI'])
+        ema50=float(last['EMA50']); ema200=float(last['EMA200'])
+        macd=float(last['MACD']); sig=float(last['SIG'])
+        score=0; trend="NONE"
+        if price>ema50>ema200 and macd>sig:
+            score+=2; trend="4H UP"
+        elif price<ema50<ema200 and macd<sig:
+            score+=2; trend="4H DOWN"
+        if 30<rsi<70: score+=1
+        if abs(macd-sig)>0: score+=0.5
+        # keep df for chart
+        df_tail = df.tail(100)
+        if score>=3 and trend!="NONE":
+            direction="BUY" if "UP" in trend else "SELL"
+            tp=price*1.022 if direction=="BUY" else price*0.978
+            sl=price*0.99 if direction=="BUY" else price*1.01
+            return {"name":name,"symbol":symbol,"price":price,"rsi":rsi,"trend":trend,"dir":direction,"score":round(score,1),"tp":tp,"sl":sl,"df":df_tail}
+        return {"name":name,"symbol":symbol,"price":price,"rsi":rsi,"trend":"NONE","score":round(score,1),"df":df_tail}
     except Exception as e:
-        print(f"DATA FAIL {ticker}: {e}", flush=True)
-        return None
+        print(f"{name} err {e}"); return None
 
-def make_signal(df):
-    if df is None or len(df) < 50:
-        return None
-    # your existing RSI/MACD logic here - keep what you had
-    # simplified example:
-    close = df['Close'].iloc[-1]
-    return f"Price ${close:.2f}"
-
-def job_60():
-    print("60min run START", flush=True)
+def make_chart(data):
     try:
-        gold = get_data("GC=F", "2d", "60m")
-        btc = get_data("BTC-USD", "2d", "60m")
-        msg = f"⏰ 60MIN CHECK {datetime.now().strftime('%H:%M')}\n"
-        if gold is not None: msg += f"GOLD: {make_signal(gold)}\n"
-        if btc is not None: msg += f"BTC: {make_signal(btc)}\n"
-        if gold is None and btc is None:
-            msg += "Yahoo blocked (429) - retrying next hour"
-        send_telegram(msg)
+        df=data['df']
+        path=f"/tmp/{data['name']}_sniper.png"
+        mpf.plot(df, type='candle', mav=(50,200), volume=False, style='yahoo', title=f"{data['name']} {data['dir']} Score {data['score']} - {data['trend']}", savefig=path)
+        return path
     except Exception as e:
-        print(f"job_60 FAIL {e}", flush=True)
-    print("60min run END", flush=True)
-
-def job_30():
-    print("30min run START", flush=True)
-    try:
-        gold = get_data("GC=F", "2d", "30m")
-        btc = get_data("BTC-USD", "2d", "30m")
-        msg = f"⏰ 30MIN CHECK {datetime.now().strftime('%H:%M')}\n"
-        if gold is not None: msg += f"GOLD: {make_signal(gold)}\n"
-        if btc is not None: msg += f"BTC: {make_signal(btc)}\n"
-        send_telegram(msg)
-    except Exception as e:
-        print(f"job_30 FAIL {e}", flush=True)
-    print("30min run END", flush=True)
+        print(f"chart err {e}"); return None
 
 @app.route("/")
-def home():
-    return "ROBOTRADER V7.1 Live - Anti 429 Fix"
-
-@app.route("/send-test")
-def send_test():
-    print("TEST HIT", flush=True)
-    send_telegram("✅ TEST OK - Bot is working! V7.1 anti-429")
-    job_60()
-    job_30()
-    return "Test sent - check Telegram now - check Logs for Sent"
+def home(): return "RoboTrader SA V6.0 SMART LIVE - Auto + Chart"
 
 @app.route("/test-telegram")
-def test_telegram():
-    ok = send_telegram("🔔 PURE TELEGRAM TEST - If you see this, token/chat is OK")
+def test_tg():
+    ok=send_tg("🔔 PURE TELEGRAM TEST - V6.0 SMART is OK, auto running")
     return f"Telegram test sent: {ok}"
 
-# Scheduler
-sched = BackgroundScheduler()
-sched.add_job(job_60, 'cron', minute=0)  # every hour at :00
-sched.add_job(job_30, 'cron', minute=30) # every hour at :30
-sched.start()
-
-print("////////////////////////////////", flush=True)
-print("ROBOTRADER V7.1 STARTED", flush=True)
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+@app.route("/signal")
+def signal_now():
+    out=[]
+    for n,t in ASSETS.items():
+        r=get_sniper(t,n)
+        if not r: continue
+        if r['trend']!="NONE" and r['score']>=3:
+            chart=make_chart(r)
+            txt=f"🎯 SNIPER {r['dir']} ⬆️ Score {r['score']}\n{n} ({r['symbol']})\nPrice: ${r['price']
