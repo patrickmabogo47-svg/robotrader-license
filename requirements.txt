@@ -2,4 +2,7 @@ Flask==2.3.3
 python-telegram-bot==20.7
 requests==2.31.0
 APScheduler==3.10.4
+yfinance==0.2.38
+pandas==2.0.3
+matplotlib==3.7.5
 gTTS==2.4.0
