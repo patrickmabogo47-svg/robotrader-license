@@ -1,6 +1,5 @@
 Flask
 yfinance
-apscheduler
+pandas
 requests
-curl_cffi
 mplfinance
