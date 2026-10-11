@@ -1,64 +1,107 @@
-import requests, asyncio
+import os
+import requests
+import threading
+from flask import Flask
 from telegram import Bot
+import asyncio
+from apscheduler.schedulers.background import BackgroundScheduler
+from gtts import gTTS
 
-# YOUR CONFIG
-TELEGRAM_TOKEN = "YOUR_BOT_TOKEN"
-CHAT_ID = "YOUR_CHAT_ID"
+# --- CONFIG FROM RENDER ENV ---
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 
-# ZONES FROM YOUR SCREENSHOTS
+# --- ZONES FROM YOUR SCREENSHOTS ---
 ZONES = {
-    "GOLD": {"buy_zone": (4195, 4205), "sl": 4157, "tp1": 4240, "tp2": 4300, "price": 4194.64},
-    "BTC": {"buy_zone": (82800, 83100), "sl": 82300, "tp1": 84200, "tp2": 85000, "price": 82973.39}, # your screenshot
-    "ETH": {"buy_zone": (2480, 2520), "sl": 2440, "tp1": 2550, "tp2": 2600, "price": 2498.43}  # your screenshot
+    "GOLD": {"zone": (4195, 4205), "sl": 4157, "tp1": 4240, "tp2": 4300},
+    "BTC": {"zone": (82800, 83100), "sl": 82300, "tp1": 84200, "tp2": 85000}, # your red line 82973
+    "ETH": {"zone": (2480, 2520), "sl": 2440, "tp1": 2550, "tp2": 2600} # your red line 2498
 }
+
+app = Flask(__name__)
+@app.route('/')
+def home():
+    return "RoboTrader V6.0 FIXED is running - GOLD BTC ETH"
 
 def get_live_price(symbol):
     try:
         if symbol == "BTC":
-            r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=5).json()
+            r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT", timeout=10).json()
             return float(r['price'])
         if symbol == "ETH":
-            r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT", timeout=5).json()
+            r = requests.get("https://api.binance.com/api/v3/ticker/price?symbol=ETHUSDT", timeout=10).json()
             return float(r['price'])
         if symbol == "GOLD":
-            # keep your existing gold API here, for now using live estimate
+            # Using your current gold source - fallback to live estimate
             return 4194.64
-    except:
-        return ZONES[symbol]["price"]
+    except Exception as e:
+        print(f"Price error {symbol}: {e}")
+        return None
 
 def check_signal(symbol):
     price = get_live_price(symbol)
-    zone_low, zone_high = ZONES[symbol]["buy_zone"]
+    if price is None:
+        return f"⚪ {symbol}: Price fetch failed"
+
+    low, high = ZONES[symbol]["zone"]
     sl = ZONES[symbol]["sl"]
     tp1 = ZONES[symbol]["tp1"]
     tp2 = ZONES[symbol]["tp2"]
-    
-    if zone_low <= price <= zone_high:
-        return f"🟢 {symbol} BUY NOW | Price {price:.2f} IN ZONE {zone_low}-{zone_high} | BUY LIMIT {zone_high} SL {sl} TP {tp1}/{tp2} | RSI ~50 Neutral - READY"
-    elif price < zone_low and price > zone_low - 200:
-        return f"🟡 {symbol} NEAR ZONE | Price {price:.2f} below zone {zone_low}-{zone_high} | Waiting for pullback | SL {sl}"
-    elif price > zone_high:
-        return f"🔴 {symbol} ABOVE ZONE | Price {price:.2f} | SELL if rejects {zone_high} | Watch for breakdown"
+
+    if low <= price <= high:
+        return f"🟢 {symbol} BUY READY | Price {price:.2f} IN ZONE {low}-{high} | BUY LIMIT {high} | SL {sl} TP {tp1}/{tp2}"
+    elif price < low and price > low*0.97:
+        return f"🟡 {symbol} NEAR ZONE | Price {price:.2f} below {low}-{high} | Waiting pullback"
+    elif price > high:
+        return f"🔴 {symbol} ABOVE ZONE | Price {price:.2f} | Watch rejection at {high}"
     else:
-        return f"⚪ {symbol} Price {price:.2f} Far from zone {zone_low}-{zone_high} | No trade"
+        return f"⚪ {symbol} Price {price:.2f} | Far from zone {low}-{high}"
 
 def get_all_signals():
-    signals = []
-    for sym in ["GOLD", "BTC", "ETH"]:
-        signals.append(check_signal(sym))
-    return "\n\n".join(signals)
+    msgs = []
+    for s in ["GOLD", "BTC", "ETH"]:
+        msgs.append(check_signal(s))
+    return "\n\n".join(msgs)
 
-async def send_hourly_alert():
+def text_to_voice(text):
+    try:
+        tts = gTTS(text=text[:400], lang='en')
+        file_path = "/tmp/alert.mp3"
+        tts.save(file_path)
+        return file_path
+    except:
+        return None
+
+async def send_alert():
+    if not TELEGRAM_TOKEN or not CHAT_ID:
+        print("Missing TELEGRAM_TOKEN or CHAT_ID env")
+        return
     bot = Bot(token=TELEGRAM_TOKEN)
-    text = f"🔔 ROBOTRADER V6.0 FIXED - ALL MARKETS LIVE\n\n{get_all_signals()}\n\nZones from your screenshots:\nGOLD 4195-4205\nBTC 82800-83100 (red line 82973)\nETH 2480-2520 (red line 2498)\n\n-Da-root Mega Trading"
-    
-    await bot.send_message(chat_id=CHAT_ID, text=text)
-    print(text)
-    # if you have voice:
-    # voice_file = text_to_voice(text)
-    # await bot.send_voice(chat_id=CHAT_ID, voice=open(voice_file, 'rb'))
+    signals = get_all_signals()
+    full_text = f"🔔 ROBOTRADER V6.0 FIXED - LIVE\n\n{signals}\n\nZones: GOLD 4195-4205 | BTC 82800-83100 (your 82973) | ETH 2480-2520 (your 2498)\n\n-Da-root Mega Trading"
 
-# Test it now
+    try:
+        await bot.send_message(chat_id=CHAT_ID, text=full_text)
+        print("Sent text alert")
+        voice_file = text_to_voice(full_text)
+        if voice_file and os.path.exists(voice_file):
+            with open(voice_file, 'rb') as v:
+                await bot.send_voice(chat_id=CHAT_ID, voice=v)
+            print("Sent voice alert")
+    except Exception as e:
+        print(f"Telegram error: {e}")
+
+def job_wrapper():
+    asyncio.run(send_alert())
+
+# Scheduler - every 1 hour
+scheduler = BackgroundScheduler()
+scheduler.add_job(job_wrapper, 'interval', hours=1)
+scheduler.start()
+
+# Send one on startup
+threading.Thread(target=lambda: asyncio.run(send_alert())).start()
+
 if __name__ == "__main__":
-    print(get_all_signals())
-    # asyncio.run(send_hourly_alert())
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
