@@ -3,3 +3,4 @@ yfinance
 apscheduler
 requests
 curl_cffi
+mplfinance
