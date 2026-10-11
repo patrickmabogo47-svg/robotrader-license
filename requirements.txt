@@ -1,5 +1,5 @@
 Flask
-requests
 yfinance
-pandas
-APScheduler
+apscheduler
+requests
+curl_cffi
