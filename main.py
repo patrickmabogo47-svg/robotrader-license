@@ -87,4 +87,46 @@ def signal_now():
         if not r: continue
         if r['trend']!="NONE" and r['score']>=3:
             chart=make_chart(r)
-            txt=f"🎯 SNIPER {r['dir']} ⬆️ Score {r['score']}\n{n} ({r['symbol']})\nPrice: ${r['price']
+            txt=f"🎯 SNIPER {r['dir']} ⬆️ Score {r['score']}\n{n} ({r['symbol']})\nPrice: ${r['price']:.2f}\n✅ {r['trend']}\nRSI:{r['rsi']:.1f}\n🎯 TP:{r['tp']:.2f}\n🛑 SL:{r['sl']:.2f}"
+            send_tg(txt, chart); out.append(txt)
+        else:
+            out.append(f"{n}: ${r['price']:.2f} RSI {r['rsi']:.1f} Score {r['score']} - No trade")
+    return "<br>".join(out)
+
+def loop_30min():
+    print("30min loop started")
+    while True:
+        try:
+            for n,t in ASSETS.items():
+                r=get_sniper(t,n)
+                if r and r['trend']!="NONE" and r['score']>=3:
+                    chart=make_chart(r)
+                    txt=f"🎯 SNIPER {r['dir']} ⬆️ Score {r['score']}\n{n} | ${r['price']:.2f}\n✅ {r['trend']}\nRSI:{r['rsi']:.1f}\n🎯 TP:{r['tp']:.2f}\n🛑 SL:{r['sl']:.2f}"
+                    send_tg(txt, chart)
+            time.sleep(1800) # 30min
+        except Exception as e:
+            print(f"loop30 err {e}"); time.sleep(60)
+
+def loop_hourly():
+    print("hourly loop started")
+    while True:
+        try:
+            time.sleep(3600)
+            lines=[]
+            for n,t in ASSETS.items():
+                r=get_sniper(t,n)
+                if r: lines.append(f"{n}: ${r['price']:.2f} | RSI {r['rsi']:.1f}")
+            if lines:
+                txt="⏰ HOURLY MARKET SUMMARY (1h)\n\n"+"\n".join(lines)+"\n\n🎯 Sniper scans every 30min auto"
+                send_tg(txt)
+        except Exception as e:
+            print(f"loop hourly err {e}"); time.sleep(60)
+
+# Start auto threads once
+if not hasattr(app, 'threads_started'):
+    threading.Thread(target=loop_30min, daemon=True).start()
+    threading.Thread(target=loop_hourly, daemon=True).start()
+    app.threads_started=True
+
+if __name__=="__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT",10000)))
